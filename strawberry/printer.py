@@ -31,7 +31,6 @@ from graphql.utilities.print_schema import (
 
 from strawberry.arguments import is_unset
 from strawberry.field import StrawberryField
-from strawberry.schema.schema_converter import GraphQLCoreConverter
 from strawberry.schema_directive import Location, StrawberrySchemaDirective
 from strawberry.types.types import TypeDefinition
 
@@ -75,14 +74,7 @@ def print_schema_directive_params(
 def print_schema_directive(
     directive: StrawberrySchemaDirective, schema: BaseSchema
 ) -> str:
-    from strawberry.schema.schema import Schema
-
-    if isinstance(schema, Schema):
-        schema_converter = schema.schema_converter
-    else:
-        schema_converter = GraphQLCoreConverter(schema.config, {})
-
-    gql_directive = schema_converter.from_schema_directive(directive)
+    gql_directive = schema.schema_converter.from_schema_directive(directive)
     params = print_schema_directive_params(
         gql_directive,
         _serialize_dataclass(directive.instance),
