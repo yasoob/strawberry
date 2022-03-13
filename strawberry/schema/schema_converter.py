@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import sys
 from enum import Enum
 from typing import (
     Any,
@@ -34,7 +36,9 @@ from graphql import (
     GraphQLUnionType,
     Undefined,
 )
+from graphql.language.directive_locations import DirectiveLocation
 
+from strawberry.annotation import StrawberryAnnotation
 from strawberry.arguments import UNSET, StrawberryArgument, convert_arguments, is_unset
 from strawberry.custom_scalar import ScalarDefinition, ScalarWrapper
 from strawberry.directive import StrawberryDirective
@@ -49,6 +53,7 @@ from strawberry.lazy_type import LazyType
 from strawberry.private import is_private
 from strawberry.schema.config import StrawberryConfig
 from strawberry.schema.types.scalar import _make_scalar_type
+from strawberry.schema_directive import StrawberrySchemaDirective
 from strawberry.type import StrawberryList, StrawberryOptional, StrawberryType
 from strawberry.types.info import Info
 from strawberry.types.types import TypeDefinition
@@ -132,6 +137,46 @@ class GraphQLCoreConverter:
             name=directive_name,
             locations=directive.locations,
             args=graphql_arguments,
+            description=directive.description,
+        )
+
+    def from_schema_directive(
+        self, directive: StrawberrySchemaDirective
+    ) -> GraphQLDirective:
+        cls = directive.wrap
+        module = sys.modules[cls.__module__]
+
+        args: Dict[str, GraphQLArgument] = {}
+        for field in dataclasses.fields(directive.wrap):
+            if is_private(field.type):
+                continue
+
+            if isinstance(field, StrawberryField):
+                default = field.default
+            else:
+                default = getattr(cls, field.name, UNSET)
+
+            if default == dataclasses.MISSING:
+                default = UNSET
+
+            arg = StrawberryArgument(
+                python_name=field.name,
+                graphql_name=None,
+                type_annotation=StrawberryAnnotation(
+                    annotation=field.type,
+                    namespace=module.__dict__,
+                ),
+                default=default,
+            )
+            args[self.config.name_converter.from_argument(arg)] = self.from_argument(
+                arg
+            )
+
+        return GraphQLDirective(
+            name=self.config.name_converter.from_directive(directive),
+            locations=[DirectiveLocation(loc.value) for loc in directive.locations],
+            is_repeatable=False,
+            args=args,
             description=directive.description,
         )
 

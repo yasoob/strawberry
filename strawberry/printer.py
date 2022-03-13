@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 from itertools import chain
-from typing import TYPE_CHECKING, Dict, Optional, cast
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, Optional, cast
 
+from graphql.language.printer import print_ast
 from graphql.type import (
     is_enum_type,
     is_input_type,
@@ -10,6 +12,8 @@ from graphql.type import (
     is_scalar_type,
     is_specified_directive,
 )
+from graphql.type.directives import GraphQLDirective
+from graphql.utilities.ast_from_value import ast_from_value
 from graphql.utilities.print_schema import (
     is_defined_type,
     print_args,
@@ -25,7 +29,9 @@ from graphql.utilities.print_schema import (
     print_type as original_print_type,
 )
 
+from strawberry.arguments import is_unset
 from strawberry.field import StrawberryField
+from strawberry.schema.schema_converter import GraphQLCoreConverter
 from strawberry.schema_directive import Location, StrawberrySchemaDirective
 from strawberry.types.types import TypeDefinition
 
@@ -34,21 +40,55 @@ if TYPE_CHECKING:
     from strawberry.schema import BaseSchema
 
 
-def print_schema_directive_params(params: Dict) -> str:
+def _serialize_dataclass(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    if isinstance(value, Iterable):
+        return [_serialize_dataclass(v) for v in value]
+    if isinstance(value, Mapping):
+        return {k: _serialize_dataclass(v) for k, v in value.items()}
+
+    return value
+
+
+def print_schema_directive_params(
+    directive: GraphQLDirective, values: Dict[str, Any]
+) -> str:
+    params = []
+    for name, arg in directive.args.items():
+        value = values.get(name, arg.default_value)
+        if is_unset(arg):
+            value = None
+        else:
+            ast = ast_from_value(value, arg.type)
+            value = ast and f"{name}: {print_ast(ast)}"
+
+        if value:
+            params.append(value)
+
     if not params:
         return ""
 
-    return "(" + ", ".join(f'{name}: "{value}"' for name, value in params.items()) + ")"
+    return "(" + ", ".join(params) + ")"
 
 
 def print_schema_directive(
     directive: StrawberrySchemaDirective, schema: BaseSchema
 ) -> str:
-    params = directive.instance.__dict__ if directive.instance else {}
+    from strawberry.schema.schema import Schema
 
-    directive_name = schema.config.name_converter.from_directive(directive)
+    if isinstance(schema, Schema):
+        schema_converter = schema.schema_converter
+    else:
+        schema_converter = GraphQLCoreConverter(schema.config, {})
 
-    return f" @{directive_name}{print_schema_directive_params(params)}"
+    gql_directive = schema_converter.from_schema_directive(directive)
+    params = print_schema_directive_params(
+        gql_directive,
+        _serialize_dataclass(directive.instance),
+    )
+
+    return f" @{gql_directive.name}{params}"
 
 
 def print_field_directives(field: Optional[StrawberryField], schema: BaseSchema) -> str:

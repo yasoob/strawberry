@@ -1,6 +1,8 @@
 import textwrap
+from typing import List, Optional
 
 import strawberry
+from strawberry.arguments import UNSET
 from strawberry.printer import print_schema
 from strawberry.schema_directive import Location
 
@@ -46,13 +48,20 @@ def test_print_directive_with_name():
 
 
 def test_directive_on_types():
-    @strawberry.schema_directive(locations=[Location.OBJECT])
+    @strawberry.input
+    class SensitiveValue:
+        key: str
+        value: str
+
+    @strawberry.schema_directive(locations=[Location.OBJECT, Location.FIELD_DEFINITION])
     class SensitiveData:
         reason: str
+        meta: Optional[List[SensitiveValue]] = UNSET
 
     @strawberry.schema_directive(locations=[Location.INPUT_OBJECT])
     class SensitiveInput:
         reason: str
+        meta: Optional[List[SensitiveValue]] = UNSET
 
     @strawberry.input(directives=[SensitiveInput(reason="GDPR")])
     class Input:
@@ -61,12 +70,29 @@ def test_directive_on_types():
     @strawberry.type(directives=[SensitiveData(reason="GDPR")])
     class User:
         first_name: str
+        phone: str = strawberry.field(
+            directives=[
+                SensitiveData(
+                    reason="PRIVATE",
+                    meta=[
+                        SensitiveValue(
+                            key="can_share_field", value="phone_share_accepted"
+                        )
+                    ],
+                )
+            ]
+        )
+        phone_share_accepted: bool
 
     @strawberry.type
     class Query:
         @strawberry.field
         def user(self, input: Input) -> User:
-            return User(first_name=input.first_name)
+            return User(
+                first_name=input.first_name,
+                phone="+551191551234",
+                phone_share_accepted=False,
+            )
 
     expected_type = """
     input Input @sensitiveInput(reason: "GDPR") {
@@ -79,8 +105,10 @@ def test_directive_on_types():
 
     type User @sensitiveData(reason: "GDPR") {
       firstName: String!
+      phone: String! @sensitiveData(reason: "PRIVATE", meta: [{key: "can_share_field", value: "phone_share_accepted"}])
+      phoneShareAccepted: Boolean!
     }
-    """
+    """  # noqa:E501
 
     schema = strawberry.Schema(query=Query)
 
